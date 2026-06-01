@@ -5,7 +5,7 @@ import sqlite3
 import plotly.express as px
 import plotly.graph_objects as go
 import random 
-from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
+# qrcode und BytesIO werden nicht mehr benötigt
 
 
 # --- FRAGEN-KONFIGURATION ---
@@ -15,7 +15,9 @@ FRAGE_2_SKALIERT_LABEL = f"{FRAGE_2} (Skaliert: Original / 10)"
 
 
 # --- PRÄSENTATOR PASSWORT ---
-PRESENTER_PASSWORD = st.secrets.get("presenter_password", "clustering")
+# Für Streamlit Cloud: Diesen Wert in .streamlit/secrets.toml speichern:
+# presenter_password = "dein_geheimes_passwort"
+PRESENTER_PASSWORD = st.secrets.get("presenter_password", "clustering") # Standardwert für lokale Tests
 
 
 st.set_page_config(layout="wide")
@@ -36,6 +38,7 @@ def init_db():
     conn.commit()
     conn.close()
 
+# Datenbank bei jedem App-Start initialisieren
 init_db()
 
 
@@ -44,6 +47,7 @@ def generate_and_insert_simulated_data(num_points_per_cluster=5):
     conn = sqlite3.connect("survey_data.db")
     cursor = conn.cursor()
     
+    # Beispiel-Cluster-Zentren für simulierte Daten (unskalierte Originalwerte)
     sim_clusters = [
         {"name_prefix": "Sim_A", "mean_coffee": 1, "mean_commute": 15, "std_coffee": 0.5, "std_commute": 5},
         {"name_prefix": "Sim_B", "mean_coffee": 6, "mean_commute": 20, "std_coffee": 1, "std_commute": 7},
@@ -82,6 +86,9 @@ def generate_and_insert_simulated_data(num_points_per_cluster=5):
 
 
 # --- ROLLEN-MANAGEMENT ---
+# Für URL-Parameter-Handling
+from urllib.parse import urlparse, urlunparse, parse_qs, urlencode 
+
 query_params = st.query_params
 app_role = query_params.get("role", "participant") 
 
@@ -89,8 +96,8 @@ app_role = query_params.get("role", "participant")
 if "current_selected_view" not in st.session_state:
     st.session_state.current_selected_view = "📱 Teilnehmer: Fragebogen"
 
-# Setze den initialen Wert für 'view' (kann überschrieben werden)
-view = st.session_state.current_selected_view 
+# Bestimme die anzuzeigende Ansicht
+view = st.session_state.current_selected_view
 
 if app_role == "presenter":
     st.sidebar.title("Präsentator-Login")
@@ -99,34 +106,27 @@ if app_role == "presenter":
     if password_input == PRESENTER_PASSWORD:
         st.sidebar.success("Angemeldet als Präsentator.")
         
-        # WICHTIG: Wenn der Präsentator sich gerade eingeloggt hat UND der View noch auf Teilnehmer steht,
-        # dann schalte den View automatisch auf die Präsentator-Demo um.
         if st.session_state.current_selected_view == "📱 Teilnehmer: Fragebogen":
             st.session_state.current_selected_view = "📺 Präsentator: Live-Schritt-Demo"
 
-        # Definition der Radio-Optionen
         view_options = ["📱 Teilnehmer: Fragebogen", "📺 Präsentator: Live-Schritt-Demo"]
-        
-        # Den Radio-Button rendern und seinen Wert in st.session_state speichern
-        # Der Wert wird direkt aus st.session_state.current_selected_view gelesen
+        default_index_for_radio = view_options.index(st.session_state.current_selected_view)
+
         st.session_state.current_selected_view = st.sidebar.radio(
             "Ansicht wählen:",
             view_options,
-            index=view_options.index(st.session_state.current_selected_view), # Setzt den Index basierend auf dem aktuellen Session State
+            index=default_index_for_radio,
             key="presenter_view_radio"
         )
-        # Aktualisiere die lokale 'view'-Variable mit dem Wert aus dem Session State
         view = st.session_state.current_selected_view 
 
-    else: # Falsches Passwort
+    else:
         st.sidebar.error("Falsches Passwort für Präsentator.")
-        app_role = "participant" # Fallback auf Teilnehmer-Rolle
-        st.session_state.current_selected_view = "📱 Teilnehmer: Fragebogen" # Auch hier den View zurücksetzen
+        app_role = "participant"
+        st.session_state.current_selected_view = "📱 Teilnehmer: Fragebogen"
         view = st.session_state.current_selected_view
-else: # app_role == "participant" by URL or no role specified
-    # Wenn die Rolle Teilnehmer ist, ist die anzuzeigende Ansicht immer das Teilnehmer-Formular.
-    st.session_state.current_selected_view = "📱 Teilnehmer: Fragebogen"
-    view = st.session_state.current_selected_view
+else:
+    view = "📱 Teilnehmer: Fragebogen"
 
 
 # ==============================================================================
@@ -191,28 +191,6 @@ if app_role == "presenter" and view == "📺 Präsentator: Live-Schritt-Demo":
         k_value = st.slider("Anzahl der Cluster (k):", min_value=2, max_value=5, value=3, help="Die Anzahl der Gruppen, die der Algorithmus finden soll.", key="k_slider")
         
         st.write(f"Teilnehmende Personen: **{len(df_raw)}**")
-
-        # --- Link für Teilnehmer (ohne QR-Code) ---
-        st.write("---")
-        st.subheader("🔗 Link für Teilnehmer")
-        
-        try:
-            base_url = st.get_url()
-        except AttributeError:
-            st.warning("`st.get_url()` ist in dieser Streamlit-Version nicht verfügbar. Bitte kopieren Sie die URL aus der Adresszeile des Browsers.")
-            base_url = "http://localhost:8501" # Fallback auf Localhost für Debugging oder ältere Versionen
-
-        parsed_url = urlparse(base_url)
-        query_dict = parse_qs(parsed_url.query)
-        if 'role' in query_dict:
-            del query_dict['role'] 
-        participant_query_string = urlencode(query_dict, doseq=True)
-        participant_url_parts = parsed_url._replace(query=participant_query_string)
-        participant_url = urlunparse(participant_url_parts)
-
-        st.markdown(f"Teilen Sie diesen Link mit den Teilnehmern: [Teilnehmer-Link]({participant_url})")
-        st.write("---")
-
 
         # --- Button für simulierte Daten ---
         if st.button("➕ Zusätzliche (simulierte) Daten hinzufügen", use_container_width=True, key="add_simulated_data_btn"):
@@ -322,6 +300,11 @@ if app_role == "presenter" and view == "📺 Präsentator: Live-Schritt-Demo":
                 st.rerun()
 
         st.write("---")
+        
+        # --- KEIN CSV IMPORT MEHR ---
+        # st.subheader("⬆️ Daten importieren")
+        # st.info("CSV-Import ist in dieser Version nicht verfügbar, da die Daten direkt in der SQLite-DB verwaltet werden.")
+        # st.write("---")
         
         # --- DATEN EXPORTIEREN MIT/OHNE CLUSTER ---
         if not df_raw.empty:
