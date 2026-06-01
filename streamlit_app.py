@@ -5,6 +5,8 @@ import sqlite3
 import plotly.express as px
 import plotly.graph_objects as go
 import random 
+import qrcode # <--- NEU: Import für QR-Code
+from io import BytesIO # <--- NEU: Für das Speichern des QR-Codes im Speicher
 from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 
 
@@ -81,6 +83,25 @@ def generate_and_insert_simulated_data(num_points_per_cluster=5):
     st.success(f"{len(sim_data_to_insert)} simulierte Datenpunkte hinzugefügt!")
 
 
+# --- QR-CODE GENERATOR FUNKTION ---
+def generate_qr_code(url):
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(url)
+    qr.make(fit=True)
+
+    img = qr.make_image(fill_color="black", back_color="white")
+    
+    # QR-Code als PNG-Bytes im Speicher speichern
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 # --- ROLLEN-MANAGEMENT ---
 query_params = st.query_params
 app_role = query_params.get("role", "participant") 
@@ -89,8 +110,8 @@ app_role = query_params.get("role", "participant")
 if "current_selected_view" not in st.session_state:
     st.session_state.current_selected_view = "📱 Teilnehmer: Fragebogen"
 
-# Setze den initialen Wert für 'view' (kann überschrieben werden)
-view = st.session_state.current_selected_view 
+# Bestimme die anzuzeigende Ansicht
+view = st.session_state.current_selected_view
 
 if app_role == "presenter":
     st.sidebar.title("Präsentator-Login")
@@ -99,34 +120,27 @@ if app_role == "presenter":
     if password_input == PRESENTER_PASSWORD:
         st.sidebar.success("Angemeldet als Präsentator.")
         
-        # WICHTIG: Wenn der Präsentator sich gerade eingeloggt hat UND der View noch auf Teilnehmer steht,
-        # dann schalte den View automatisch auf die Präsentator-Demo um.
         if st.session_state.current_selected_view == "📱 Teilnehmer: Fragebogen":
             st.session_state.current_selected_view = "📺 Präsentator: Live-Schritt-Demo"
 
-        # Definition der Radio-Optionen
         view_options = ["📱 Teilnehmer: Fragebogen", "📺 Präsentator: Live-Schritt-Demo"]
-        
-        # Den Radio-Button rendern und seinen Wert in st.session_state speichern
-        # Der Wert wird direkt aus st.session_state.current_selected_view gelesen
+        default_index_for_radio = view_options.index(st.session_state.current_selected_view)
+
         st.session_state.current_selected_view = st.sidebar.radio(
             "Ansicht wählen:",
             view_options,
-            index=view_options.index(st.session_state.current_selected_view), # Setzt den Index basierend auf dem aktuellen Session State
+            index=default_index_for_radio,
             key="presenter_view_radio"
         )
-        # Aktualisiere die lokale 'view'-Variable mit dem Wert aus dem Session State
         view = st.session_state.current_selected_view 
 
-    else: # Falsches Passwort
+    else:
         st.sidebar.error("Falsches Passwort für Präsentator.")
-        app_role = "participant" # Fallback auf Teilnehmer-Rolle
-        st.session_state.current_selected_view = "📱 Teilnehmer: Fragebogen" # Auch hier den View zurücksetzen
+        app_role = "participant"
+        st.session_state.current_selected_view = "📱 Teilnehmer: Fragebogen"
         view = st.session_state.current_selected_view
-else: # app_role == "participant" by URL or no role specified
-    # Wenn die Rolle Teilnehmer ist, ist die anzuzeigende Ansicht immer das Teilnehmer-Formular.
-    st.session_state.current_selected_view = "📱 Teilnehmer: Fragebogen"
-    view = st.session_state.current_selected_view
+else:
+    view = "📱 Teilnehmer: Fragebogen"
 
 
 # ==============================================================================
@@ -192,9 +206,9 @@ if app_role == "presenter" and view == "📺 Präsentator: Live-Schritt-Demo":
         
         st.write(f"Teilnehmende Personen: **{len(df_raw)}**")
 
-        # --- Link für Teilnehmer (ohne QR-Code) ---
+        # --- Link & QR Code für Teilnehmer ---
         st.write("---")
-        st.subheader("🔗 Link für Teilnehmer")
+        st.subheader("🔗 Link & QR-Code für Teilnehmer")
         
         try:
             base_url = st.get_url()
@@ -205,12 +219,16 @@ if app_role == "presenter" and view == "📺 Präsentator: Live-Schritt-Demo":
         parsed_url = urlparse(base_url)
         query_dict = parse_qs(parsed_url.query)
         if 'role' in query_dict:
-            del query_dict['role'] 
+            del query_dict['role']
         participant_query_string = urlencode(query_dict, doseq=True)
         participant_url_parts = parsed_url._replace(query=participant_query_string)
         participant_url = urlunparse(participant_url_parts)
 
+
         st.markdown(f"Teilen Sie diesen Link mit den Teilnehmern: [Teilnehmer-Link]({participant_url})")
+        
+        qr_bytes = generate_qr_code(participant_url) # <--- QR-Code wird hier generiert
+        st.image(qr_bytes, width=150, caption="QR-Code zur Eingabeseite") # <--- QR-Code wird hier angezeigt
         st.write("---")
 
 
@@ -322,6 +340,11 @@ if app_role == "presenter" and view == "📺 Präsentator: Live-Schritt-Demo":
                 st.rerun()
 
         st.write("---")
+        
+        # --- KEIN CSV IMPORT MEHR ---
+        # st.subheader("⬆️ Daten importieren")
+        # st.info("CSV-Import ist in dieser Version nicht verfügbar, da die Daten direkt in der SQLite-DB verwaltet werden.")
+        # st.write("---")
         
         # --- DATEN EXPORTIEREN MIT/OHNE CLUSTER ---
         if not df_raw.empty:
